@@ -1,0 +1,13 @@
+Makefile
+metadata.json
+icons
+/screenshots/
+nuvola-app-anghami
+eu.tiliado.NuvolaAppAnghami.desktop
+eu.tiliado.NuvolaAppAnghami.service
+eu.tiliado.NuvolaAppAnghami.appdata.xml
+nuvola-app-anghami.metainfo.xml
+eu.tiliado.WebRuntimeAppAnghami.desktop
+eu.tiliado.WebRuntimeAppAnghami.service
+eu.tiliado.WebRuntimeAppAnghami.appdata.xml
+nuvola-app-anghami.metainfo.xml
