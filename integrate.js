@@ -31,9 +31,18 @@
   // Handy aliases
   const PlaybackState = Nuvola.PlaybackState
   const PlayerAction = Nuvola.PlayerAction
+  const C_ = Nuvola.Translate.pgettext
+
+  const ACTION_LIKE = 'like'
 
   // Create new WebApp prototype
   const WebApp = Nuvola.$WebApp()
+
+  WebApp._onInitAppRunner = function (emitter) {
+    Nuvola.WebApp._onInitAppRunner.call(this, emitter)
+    Nuvola.actions.addAction('playback', 'win', ACTION_LIKE, C_('Action', 'Like song'),
+      null, null, null, false)
+  }
 
   // Initialization routines
   WebApp._onInitWebWorker = function (emitter) {
@@ -49,36 +58,169 @@
 
   // Page is ready for magic
   WebApp._onPageReady = function () {
-    // Connect handler for signal ActionActivated
+    this.timeTotal = null
     Nuvola.actions.connect('ActionActivated', this)
-
-    // Start update routine
+    player.addExtraActions([ACTION_LIKE])
     this.update()
   }
 
   // Extract data from the web page
   WebApp.update = function () {
+    const elms = this._getElements()
+    const times = this._getTimes()
+
     const track = {
-      title: null,
-      artist: null,
+      title: Nuvola.queryText('.player-wrapper .action-title'),
+      artist: Nuvola.queryText('.player-wrapper .action-artist'),
       album: null,
       artLocation: null,
-      rating: null
+      length: times[1]
     }
 
-    player.setTrack(track)
-    player.setPlaybackState(PlaybackState.UNKNOWN)
+    const artwork = document.querySelector('.player-wrapper .track-coverart')
+    if (artwork && artwork.style.backgroundImage) {
+      track.artLocation = artwork.style.backgroundImage.split('"')[1].replace('/webp/', '').replace('size=60', 'size=256')
+    }
 
-    // Schedule the next update
+    let state
+    if (elms.pause) {
+      state = PlaybackState.PLAYING
+    } else if (elms.play) {
+      state = PlaybackState.PAUSED
+    } else {
+      state = PlaybackState.UNKNOWN
+    }
+
+    player.setPlaybackState(state)
+    player.setTrack(track)
+    player.setCanGoPrev(elms.prev)
+    player.setCanGoNext(elms.next)
+    player.setCanPlay(elms.play)
+    player.setCanPause(elms.pause)
+
+    player.setTrackPosition(times[0])
+    player.setCanSeek(state !== PlaybackState.UNKNOWN && elms.progressbar)
+
+    let volume = null
+    if (elms.volumebar && elms.volumebar.firstChild) {
+      volume = elms.volumebar.firstChild.style.height.replace('%', '') / 100
+    }
+    player.updateVolume(volume)
+    player.setCanChangeVolume(state !== PlaybackState.UNKNOWN)
+
+    const repeat = this._getRepeat(elms)
+    player.setCanRepeat(repeat !== null)
+    player.setRepeatState(repeat)
+
+    const shuffle = elms.shuffle ? elms.shuffle.classList.contains('active') : null
+    player.setCanShuffle(shuffle !== null)
+    player.setShuffleState(shuffle)
+
+    Nuvola.actions.updateEnabledFlag(ACTION_LIKE, !!elms.like)
+    Nuvola.actions.updateState(ACTION_LIKE, elms.like && elms.like.getAttribute('aria-checked') === 'true')
+
     setTimeout(this.update.bind(this), 500)
   }
 
-  // Handler of playback actions
   WebApp._onActionActivated = function (emitter, name, param) {
+    const elms = this._getElements()
     switch (name) {
-      case PlayerAction.Play:
+      case PlayerAction.TOGGLE_PLAY:
+        if (elms.play) {
+          Nuvola.clickOnElement(elms.play)
+        } else {
+          Nuvola.clickOnElement(elms.pause)
+        }
+        break
+      case PlayerAction.PLAY:
+        Nuvola.clickOnElement(elms.play)
+        break
+      case PlayerAction.PAUSE:
+      case PlayerAction.STOP:
+        Nuvola.clickOnElement(elms.pause)
+        break
+      case PlayerAction.PREV_SONG:
+        Nuvola.clickOnElement(elms.prev)
+        break
+      case PlayerAction.NEXT_SONG:
+        Nuvola.clickOnElement(elms.next)
+        break
+      case PlayerAction.SHUFFLE:
+        Nuvola.clickOnElement(elms.shuffle)
+        break
+      case PlayerAction.REPEAT:
+        this._setRepeat(elms, param)
+        break
+      case PlayerAction.SEEK: {
+        const total = this._getTimes()[1]
+        if (total && param > 0 && param <= total) {
+          Nuvola.clickOnElement(elms.progressbar, param / total, 0.5)
+        }
+        break
+      }
+      case PlayerAction.CHANGE_VOLUME:
+        elms.volumebar.parentNode.style.display = 'block'
+        Nuvola.clickOnElement(elms.volumebar, 0.5, Math.max(0, 1 - param))
+        elms.volumebar.parentNode.style.display = ''
+        break
+      case ACTION_LIKE:
+        Nuvola.clickOnElement(elms.like)
         break
     }
+  }
+
+  WebApp._getRepeat = function (elms) {
+    if (!elms.repeat) {
+      return null
+    }
+    return elms.repeat.classList.contains('active') ? Nuvola.PlayerRepeat.PLAYLIST : Nuvola.PlayerRepeat.NONE
+  }
+
+  WebApp._setRepeat = function (elms, value) {
+    const repeat = this._getRepeat(elms)
+    if (value !== Nuvola.PlayerRepeat.TRACK && value !== repeat) {
+      Nuvola.clickOnElement(elms.repeat)
+    }
+  }
+
+  WebApp._getTimes = function () {
+    let elapsed = Nuvola.queryText('.player-wrapper .duration-text')
+    const remaining = Nuvola.queryText('.player-wrapper .duration-text:last-child')
+    if (!elapsed || !remaining) {
+      return [null, null]
+    }
+
+    elapsed = Nuvola.parseTimeUsec(elapsed)
+    const total = elapsed + Nuvola.parseTimeUsec(remaining)
+
+    if (!this.timeTotal || Math.abs(this.timeTotal - total) >= 2000000) {
+      this.timeTotal = total
+    }
+
+    return [elapsed, this.timeTotal]
+  }
+
+  WebApp._getElements = function () {
+    // Interesting elements
+    const elms = {
+      play: document.querySelector('.player-wrapper .icon.play'),
+      pause: document.querySelector('.player-wrapper .icon.pause'),
+      next: document.querySelector('.player-wrapper .icon.next'),
+      prev: document.querySelector('.player-wrapper .icon.prev'),
+      repeat: document.querySelector('.player-wrapper .player-controls .icon'),
+      shuffle: document.querySelector('.player-wrapper .icon.shuffle'),
+      like: document.querySelector('.player-wrapper .icon.song'),
+      progressbar: document.querySelector('.player-wrapper anghami-buffer .cont'),
+      volumebar: document.querySelector('.player-wrapper .volume-bar')
+    }
+
+    // Ignore disabled buttons
+    for (const key in elms) {
+      if (elms[key] && elms[key].disabled) {
+        elms[key] = null
+      }
+    }
+    return elms
   }
 
   WebApp.start()
